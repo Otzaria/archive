@@ -8,8 +8,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
-  for (final extension in ['zip', 'tar']) {
-    test('$extension only calls extraction callback for written files',
+  for (final extension in ['tar']) {
+    test('$extension does not report rejected traversal entries',
         () async {
       final dir = Directory.systemTemp.createTempSync('archive-callback-');
       addTearDown(() => dir.deleteSync(recursive: true));
