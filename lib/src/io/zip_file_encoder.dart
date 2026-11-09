@@ -152,11 +152,20 @@ class ZipFileEncoder {
       void Function(double)? onProgress,
       ZipFileProgress? filter}) async {
     final dirName = path.basename(dir.path);
-    final files = dir.listSync(recursive: true, followLinks: followLinks);
-    final amount = files.length;
+    // List files lazily so a directory with many entries does not create a
+    // large list or block the event loop while enumerating it. Only a caller
+    // requesting progress needs an initial counting pass.
+    var amount = 0;
+    if (filter != null || onProgress != null) {
+      await for (final _ in
+          dir.list(recursive: true, followLinks: followLinks)) {
+        amount++;
+      }
+    }
     var current = 0;
-    for (final file in files) {
-      final progress = ++current / amount;
+    await for (final file in
+        dir.list(recursive: true, followLinks: followLinks)) {
+      final progress = amount == 0 ? 0.0 : ++current / amount;
       if (filter != null) {
         final operation = filter(file, progress);
         if (operation == ZipFileOperation.cancel) {
@@ -191,32 +200,38 @@ class ZipFileEncoder {
 
   void addFileSync(File file, [String? filename, int? level]) {
     final fileStream = InputFileStream(file.path);
-    filename ??= path.basename(file.path);
-    filename = path.posix.fromUri(path.toUri(filename));
-    final archiveFile = ArchiveFile.stream(filename, fileStream);
+    try {
+      filename ??= path.basename(file.path);
+      filename = path.posix.fromUri(path.toUri(filename));
+      final archiveFile = ArchiveFile.stream(filename, fileStream);
 
-    archiveFile.lastModTime =
-        (file.lastModifiedSync()).millisecondsSinceEpoch ~/ 1000;
+      archiveFile.lastModTime =
+          (file.lastModifiedSync()).millisecondsSinceEpoch ~/ 1000;
+      archiveFile.mode = (file.statSync()).mode;
 
-    archiveFile.mode = (file.statSync()).mode;
-
-    _add(archiveFile, level);
+      _add(archiveFile, level);
+    } finally {
+      // ZipEncoder normally closes entries itself, but validation failures
+      // before its close callback must not leak the input file handle.
+      fileStream.closeSync();
+    }
   }
 
   Future<void> addFile(File file, [String? filename, int? level]) async {
     final fileStream = InputFileStream(file.path);
-    filename ??= path.basename(file.path);
-    filename = path.posix.fromUri(path.toUri(filename));
-    final archiveFile = ArchiveFile.stream(filename, fileStream);
+    try {
+      filename ??= path.basename(file.path);
+      filename = path.posix.fromUri(path.toUri(filename));
+      final archiveFile = ArchiveFile.stream(filename, fileStream);
 
-    archiveFile.lastModTime =
-        (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
+      archiveFile.lastModTime =
+          (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
+      archiveFile.mode = (await file.stat()).mode;
 
-    archiveFile.mode = (await file.stat()).mode;
-
-    _add(archiveFile, level);
-
-    await fileStream.close();
+      _add(archiveFile, level);
+    } finally {
+      await fileStream.close();
+    }
   }
 
   void addArchiveFile(ArchiveFile file) {
@@ -241,12 +256,18 @@ class ZipFileEncoder {
   }
 
   void closeSync() {
-    _encoder.endEncode();
-    _output.closeSync();
+    try {
+      _encoder.endEncode();
+    } finally {
+      _output.closeSync();
+    }
   }
 
   Future<void> close() async {
-    _encoder.endEncode();
-    await _output.close();
+    try {
+      _encoder.endEncode();
+    } finally {
+      await _output.close();
+    }
   }
 }

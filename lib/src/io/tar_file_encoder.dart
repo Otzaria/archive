@@ -88,13 +88,22 @@ class TarFileEncoder {
       {bool followLinks = true,
       bool includeDirName = true,
       ZipFileProgress? filter}) async {
-    final files = dir.listSync(recursive: true, followLinks: followLinks);
+    // Enumerate lazily rather than allocating a list for every file in a
+    // large directory. Count asynchronously only when the filter needs the
+    // progress fraction.
+    var numFiles = 0;
+    if (filter != null) {
+      await for (final _ in
+          dir.list(recursive: true, followLinks: followLinks)) {
+        numFiles++;
+      }
+    }
 
     final dirName = path.basename(dir.path);
-    final numFiles = files.length;
     var fileCount = 0;
-    for (final file in files) {
-      final progress = ++fileCount / numFiles;
+    await for (final file in
+        dir.list(recursive: true, followLinks: followLinks)) {
+      final progress = numFiles == 0 ? 0.0 : ++fileCount / numFiles;
       if (filter != null) {
         final operation = filter(file, progress);
         if (operation == ZipFileOperation.cancel) {
@@ -120,16 +129,23 @@ class TarFileEncoder {
 
   Future<void> addFile(File file, [String? filename]) async {
     final fileStream = InputFileStream(file.path);
-    final f =
-        ArchiveFile.stream(filename ?? path.basename(file.path), fileStream);
-    f.lastModTime = (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
-    f.mode = (await file.stat()).mode;
-    _encoder.add(f);
-    await fileStream.close();
+    try {
+      final f =
+          ArchiveFile.stream(filename ?? path.basename(file.path), fileStream);
+      f.lastModTime = (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
+      f.mode = (await file.stat()).mode;
+      _encoder.add(f);
+    } finally {
+      // A stat or encoding error must not retain an open file descriptor.
+      await fileStream.close();
+    }
   }
 
   Future<void> close() async {
-    _encoder.finish();
-    await _output.close();
+    try {
+      _encoder.finish();
+    } finally {
+      await _output.close();
+    }
   }
 }
