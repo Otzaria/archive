@@ -90,6 +90,32 @@ void main() {
       expect(input.readBytes(6).toUint8List(), testData.sublist(0, 6));
     });
 
+    test('truncated numeric reads do not advance beyond file or subset',
+        () {
+      final readers = <(int, int Function(InputStream))>[
+        (2, (stream) => stream.readUint16()),
+        (3, (stream) => stream.readUint24()),
+        (4, (stream) => stream.readUint32()),
+        (8, (stream) => stream.readUint64()),
+      ];
+      for (final (width, read) in readers) {
+        for (var available = 0; available < width; available++) {
+          final file = InputFileStream(testPath);
+          try {
+            final part = file.subset(
+                position: testData.length - available,
+                length: available);
+            expect(read(part), 0, reason: 'width=$width, left=$available');
+            expect(part.position, available);
+            expect(part.length, 0);
+            expect(part.isEOS, isTrue);
+          } finally {
+            file.closeSync();
+          }
+        }
+      }
+    });
+
     test('readInto on subset stops at subset end', () {
       final file = InputFileStream(testPath, bufferSize: 2);
       addTearDown(file.closeSync);
