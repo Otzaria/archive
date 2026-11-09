@@ -49,6 +49,20 @@ void main() {
       expect(buffer.readBytes(1, 0x7fffffffffffffff), testData.sublist(1));
     }, testOn: 'vm');
 
+    test('small buffered reads cannot expose bytes past EOF', () {
+      final buffer = FileBuffer(FileHandle(testPath), bufferSize: 16);
+      addTearDown(buffer.closeSync);
+      // Prime the reusable cache with earlier bytes. Reading a short tail
+      // must not append leftover cached data or zero padding.
+      expect(buffer.readBytes(0, 16), testData.sublist(0, 16));
+      expect(buffer.readBytes(testData.length - 3, 8),
+          testData.sublist(testData.length - 3));
+      expect(buffer.readBytes(testData.length, 4), isEmpty);
+      expect(buffer.readBytes(testData.length + 100, 4), isEmpty);
+      expect(buffer.readBytes(0, -1), isEmpty);
+      expect(() => buffer.readBytes(-1, 4), throwsRangeError);
+    });
+
     test('negative count reads same bytes from file and memory', () {
       final file = InputFileStream(testPath)..readBytes(10);
       addTearDown(file.closeSync);
