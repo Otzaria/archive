@@ -63,6 +63,17 @@ void main() {
     expect(decoded.single.readBytes(), 'data'.codeUnits);
   });
 
+  test('maximal comment plus short trailing junk still decodes', () {
+    final archive = Archive()
+      ..addFile(ArchiveFile.string('file.txt', 'data'))
+      ..comment = ''.padRight(65535, 'x');
+    final bytes = ZipEncoder().encodeBytes(archive);
+    final trailing =
+        Uint8List.fromList([...bytes, ...List.filled(512, 0x2e)]);
+    expect(ZipDecoder().decodeBytes(trailing).single.readBytes(),
+        'data'.codeUnits);
+  });
+
   test('a large malformed file on disk does not require a full scan', () {
     final dir = Directory.systemTemp.createTempSync('archive-eocd-');
     addTearDown(() => dir.deleteSync(recursive: true));
