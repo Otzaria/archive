@@ -37,7 +37,7 @@ void main() {
     try {
       // Invalid zip names fail before the encoder's normal autoClose callback.
       expect(
-        () => encoder.addFileSync(inputFile, 'a' * 65536),
+        () => encoder.addFileSync(inputFile, ''.padRight(65536, 'a')),
         throwsA(isA<ArchiveException>()),
       );
       expect(_openDescriptorsFor(inputFile.path), before);
