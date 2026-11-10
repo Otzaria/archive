@@ -336,13 +336,16 @@ void main() {
     expect(sink.offsets, [8, 8, 8]);
   });
 
-  test('ChunkedSink moves held bytes to front once more was read than is held',
+  test('ChunkedSink keeps held bytes in place when tail capacity is enough',
       () {
     final sink = _HeaderThenBody(_Held());
     for (final size in [4, 6, 4]) {
       sink.add(Uint8List(size));
     }
-    expect(sink.offsets, [8, 0]);
+    // The former implementation compacted the two held bytes to the front
+    // even though the incoming four bytes still fit after them. In-place
+    // append avoids an unnecessary setRange and preserves correct parsing.
+    expect(sink.offsets, [8, 8]);
   });
 
   test('bound converter decodes no more units while listener is paused',
