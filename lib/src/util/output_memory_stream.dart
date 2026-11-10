@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'byte_order.dart';
+import 'input_decode_stream.dart';
 import 'input_memory_stream.dart';
 import 'input_stream.dart';
 import 'output_stream.dart';
@@ -71,7 +72,9 @@ class OutputMemoryStream extends OutputStream {
     if (stream is InputMemoryStream) {
       // An in-memory stream already provides direct access to its data.
       final count = stream.length;
-      reserve(length + count);
+      while (length + count > _buffer.length) {
+        _expandBuffer(length + count - _buffer.length);
+      }
       if (stream.buffer != null) {
         _buffer.setRange(
             length, length + count, stream.buffer!, stream.position);
@@ -80,9 +83,13 @@ class OutputMemoryStream extends OutputStream {
       return;
     }
 
-    // Avoid querying the remaining length of a lazy decoder: it would decode
-    // its entire output before copying the first byte. Copy incrementally
-    // from a view so the source stream's position is left unchanged.
+    // Advancing a decode view discards data at the source's original position.
+    if (stream is InputDecodeStream) {
+      writeBytes(stream.toUint8List());
+      return;
+    }
+
+    // Copy bounded pieces through a view, leaving the source position intact.
     final reader = stream.subset(position: stream.position);
     final scratch = Uint8List(64 * 1024);
     while (!reader.isEOS) {
