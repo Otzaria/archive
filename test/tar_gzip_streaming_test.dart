@@ -66,6 +66,21 @@ void main() {
     expect(observed.last, 1.0);
   });
 
+  test('invalid compression level does not leave a partial archive',
+      () async {
+    final base = Directory.systemTemp.createTempSync('archive-tgz-level-');
+    addTearDown(() => base.deleteSync(recursive: true));
+    final source = Directory(p.join(base.path, 'source'))..createSync();
+    File(p.join(source.path, 'good.txt')).writeAsStringSync('good');
+    final output = p.join(base.path, 'invalid.tar.gz');
+
+    await expectLater(
+        TarFileEncoder().tarDirectory(source,
+            compression: TarFileEncoder.gzip, filename: output, level: 99),
+        throwsA(isA<Exception>()));
+    expect(File(output).existsSync(), isFalse);
+  });
+
   test('compression errors remove partial archive', () async {
     final base = Directory.systemTemp.createTempSync('archive-tgz-failed-');
     addTearDown(() => base.deleteSync(recursive: true));
