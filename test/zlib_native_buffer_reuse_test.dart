@@ -28,11 +28,17 @@ class _ReadIntoOnly extends InputMemoryStream {
   }
 }
 
+Uint8List _incompressible(int size) {
+  var state = 0x1d3a5c7b;
+  return Uint8List.fromList(List<int>.generate(size, (_) {
+    state = (state * 1664525 + 1013904223) & 0xffffffff;
+    return (state >> 16) & 255;
+  }));
+}
+
 void main() {
   test('native ZLib stream decoder reuses readInto across many chunks', () {
-    final source = Uint8List.fromList(
-      List<int>.generate(6 * 1024 * 1024, (i) => (i * 131 + i ~/ 991) & 255),
-    );
+    final source = _incompressible(2 * 1024 * 1024);
     final compressed = ZLibEncoder().encodeBytes(source);
     final input = _ReadIntoOnly(compressed);
     final output = OutputMemoryStream();
@@ -44,9 +50,7 @@ void main() {
   });
 
   test('native ZLib stream decoder handles the raw deflate mode', () {
-    final source = Uint8List.fromList(
-      List<int>.generate(2 * 1024 * 1024, (i) => (i * 17 + i ~/ 4093) & 255),
-    );
+    final source = _incompressible(2 * 1024 * 1024);
     final compressed = ZLibEncoder().encodeBytes(source);
     // Strip zlib header and 4-byte Adler checksum to get raw deflate data.
     final input = _ReadIntoOnly(
