@@ -93,7 +93,7 @@ class BZip2Decoder {
       //throw ArchiveException('Invalid BlockSize');
     }
 
-    _tt = Uint32List(_ttStartSize);
+    _prepareTt();
 
     var combinedCrc = 0;
 
@@ -154,7 +154,7 @@ class BZip2Decoder {
   /// to do the setup
   void beginStream(int blockSize100k) {
     _blockSize100k = blockSize100k;
-    _tt = Uint32List(_ttStartSize);
+    _prepareTt();
     _groupPos = 0;
     _groupNo = 0;
     _gSel = 0;
@@ -920,6 +920,18 @@ class BZip2Decoder {
     }
   }
 
+  // A concatenated bzip2 payload can contain thousands of independent
+  // members. Keep the block table across those members instead of allocating
+  // and discarding a new 64 KiB array for every one of them. Every valid
+  // block rewrites the active table prefix before reading it.
+  void _prepareTt() {
+    if (_hasTt) {
+      return;
+    }
+    _tt = Uint32List(_ttStartSize);
+    _hasTt = true;
+  }
+
   void _growTt(int needed, int max) {
     var size = _tt.length * 2;
     if (size < needed) {
@@ -937,6 +949,7 @@ class BZip2Decoder {
 
   late int _blockSize100k;
   late Uint32List _tt;
+  bool _hasTt = false;
   late Uint8List _inUse16;
   late Uint8List _inUse;
   late Uint8List _seqToUnseq;
