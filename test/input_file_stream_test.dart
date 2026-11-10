@@ -49,6 +49,29 @@ void main() {
       expect(buffer.readBytes(1, 0x7fffffffffffffff), testData.sublist(1));
     }, testOn: 'vm');
 
+    test('small buffered reads cannot expose bytes past EOF', () {
+      final buffer = FileBuffer(FileHandle(testPath), bufferSize: 16);
+      addTearDown(buffer.closeSync);
+      // Prime the reusable cache with earlier bytes. Reading a short tail
+      // must not append leftover cached data or zero padding.
+      expect(buffer.readBytes(0, 16), testData.sublist(0, 16));
+      expect(buffer.readBytes(testData.length - 3, 8),
+          testData.sublist(testData.length - 3));
+      expect(buffer.readBytes(testData.length, 4), isEmpty);
+      expect(buffer.readBytes(testData.length + 100, 4), isEmpty);
+      expect(buffer.readBytes(0, -1), isEmpty);
+      expect(() => buffer.readBytes(-1, 4), throwsRangeError);
+    });
+
+    test('readBytes returns only actual bytes when the file ends early', () {
+      final buffer =
+          FileBuffer(_OverstatedLengthHandle(testPath), bufferSize: 8);
+      addTearDown(buffer.closeSync);
+      expect(buffer.readBytes(118, 8), testData.sublist(118));
+      expect(buffer.readBytes(80, 60), testData.sublist(80));
+      expect(buffer.readBytes(125, 8), isEmpty);
+    });
+
     test('negative count reads same bytes from file and memory', () {
       final file = InputFileStream(testPath)..readBytes(10);
       addTearDown(file.closeSync);
@@ -479,4 +502,11 @@ class _ShortReadHandle extends _CountingHandle {
     final count = length ?? buffer.length;
     return super.readInto(buffer, count > 3 ? 3 : count);
   }
+}
+
+class _OverstatedLengthHandle extends _ShortReadHandle {
+  _OverstatedLengthHandle(super.path);
+
+  @override
+  int get length => super.length + 20;
 }
