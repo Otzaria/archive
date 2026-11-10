@@ -259,10 +259,7 @@ Future<void> extractFileToDisk(String inputPath, String outputPath,
         throwOnError: strict,
         allowAbsoluteSymlinks: allowAbsoluteSymlinks);
     for (final file in archive) {
-      // ZIP callbacks have historically included entries that failed to
-      // decode (including unreadable links). Consumers use them for progress
-      // and expect exactly one callback per input entry; preserve that
-      // contract even when EntryWriter skips a damaged entry.
+      // ZIP progress callbacks include rejected entries, one per input entry.
       writer.write(file);
       callback?.call(file);
     }
