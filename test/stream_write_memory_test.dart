@@ -75,6 +75,16 @@ void main() {
     expect(input.position, 17, reason: 'writeStream must preserve position');
   });
 
+  test('OutputMemoryStream growth copies only written content', () {
+    final output = OutputMemoryStream(size: 1024 * 1024);
+    output.writeBytes([1, 2, 3]);
+    // Force growth from a mostly unused 1 MiB reservation.
+    output.writeBytes(Uint8List(1024 * 1024));
+    expect(output.length, 1024 * 1024 + 3);
+    expect(output.subset(0, 3), [1, 2, 3]);
+    expect(output.subset(3).every((byte) => byte == 0), isTrue);
+  });
+
   test('InputDecodeStream output copies large source in bounded chunks', () {
     final data = _fixture();
     final source = _NoEagerInput(data)..skip(31);
