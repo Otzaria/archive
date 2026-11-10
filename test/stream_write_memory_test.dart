@@ -4,12 +4,43 @@ import 'package:archive/archive.dart';
 import 'package:test/test.dart';
 
 /// A source that can be read in bounded chunks but refuses eager reads.
-class _NoEagerInput extends InputMemoryStream {
-  _NoEagerInput(super.bytes);
+class _NoEagerInput extends InputStream {
+  _NoEagerInput(List<int> bytes)
+      : _source = InputMemoryStream(bytes),
+        super(byteOrder: ByteOrder.littleEndian);
+
+  final InputMemoryStream _source;
 
   @override
   int get length => throw StateError('length would decode a lazy source');
-
+  @override
+  int get position => _source.position;
+  @override
+  set position(int value) => _source.position = value;
+  @override
+  bool get isEOS => _source.isEOS;
+  @override
+  bool open() => _source.open();
+  @override
+  Future<void> close() => _source.close();
+  @override
+  void closeSync() => _source.closeSync();
+  @override
+  void reset() => _source.reset();
+  @override
+  void setPosition(int value) => _source.setPosition(value);
+  @override
+  void skip(int count) => _source.skip(count);
+  @override
+  void rewind([int count = 1]) => _source.rewind(count);
+  @override
+  InputStream subset({int? position, int? length, int? bufferSize}) =>
+      _source.subset(position: position, length: length, bufferSize: bufferSize);
+  @override
+  int readByte() => _source.readByte();
+  @override
+  int readInto(Uint8List into, int at, int count) =>
+      _source.readInto(into, at, count);
   @override
   Uint8List toUint8List() => throw StateError('unexpected eager conversion');
 }
