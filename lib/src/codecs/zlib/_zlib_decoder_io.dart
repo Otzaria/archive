@@ -115,13 +115,20 @@ class _ZLibDecoder extends ZLibDecoderBase {
     }
     final inSink = ZLibCodec(raw: raw).decoder.startChunkedConversion(outSink);
     var left = seen - trailerLength;
+    // Reuse a single input buffer. File-backed reads otherwise allocate a
+    // fresh Uint8List for each piece, adding GC and copy pressure when
+    // inflating large archives.
+    final scratch = Uint8List(zlibChunkSize);
     while (left > 0) {
-      final chunk = input.readBytes(min(zlibChunkSize, left)).toUint8List();
-      if (chunk.isEmpty) {
+      final take = min(zlibChunkSize, left);
+      final got = input.readInto(scratch, 0, take);
+      if (got <= 0) {
         break;
       }
-      inSink.add(chunk);
-      left -= chunk.length;
+      // dart:io's chunked decoder processes add synchronously, so the
+      // underlying bytes can be overwritten on the next iteration.
+      inSink.add(Uint8List.sublistView(scratch, 0, got));
+      left -= got;
     }
     // Computed Adler-32 trailer made throwOnError 12-20% slower on 100 and
     // 500 MB for crafted streams only, so it stays off as in decodeBytes
