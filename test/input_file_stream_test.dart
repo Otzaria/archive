@@ -90,8 +90,7 @@ void main() {
       expect(input.readBytes(6).toUint8List(), testData.sublist(0, 6));
     });
 
-    test('truncated numeric reads do not advance beyond file or subset',
-        () {
+    test('truncated numeric reads do not advance beyond file or subset', () {
       final readers = <(int, int Function(InputStream))>[
         (2, (stream) => stream.readUint16()),
         (3, (stream) => stream.readUint24()),
@@ -102,13 +101,21 @@ void main() {
         for (var available = 0; available < width; available++) {
           final file = InputFileStream(testPath);
           try {
-            final part = file.subset(
-                position: testData.length - available,
-                length: available);
-            expect(read(part), 0, reason: 'width=$width, left=$available');
-            expect(part.position, available);
-            expect(part.length, 0);
-            expect(part.isEOS, isTrue);
+            for (final offset in [10, testData.length - available]) {
+              for (final order in ByteOrder.values) {
+                final part = file.subset(position: offset, length: available)
+                  ..byteOrder = order;
+                expect(read(part), 0,
+                    reason: 'width=$width, left=$available, offset=$offset, '
+                        'order=$order');
+                expect(part.position, available);
+                expect(part.length, 0);
+                expect(part.isEOS, isTrue);
+                expect(read(part), 0);
+                expect(part.position, available);
+              }
+            }
+            expect(file.position, 0);
           } finally {
             file.closeSync();
           }
