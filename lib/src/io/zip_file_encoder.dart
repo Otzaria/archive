@@ -28,11 +28,9 @@ class ZipFileEncoder {
       void Function(double)? onProgress,
       DateTime? modified,
       ZipFileProgress? filter}) async {
-    create(
-      _composeZipDirectoryPath(dir: dir, filename: filename),
-      level: level ??= gzip,
-      modified: modified,
-    );
+    final outputPath =
+        _composeZipDirectoryPath(dir: dir, filename: filename);
+    create(outputPath, level: level ??= gzip, modified: modified);
 
     try {
       await addDirectory(dir,
@@ -41,9 +39,26 @@ class ZipFileEncoder {
           followLinks: followLinks,
           onProgress: onProgress,
           filter: filter);
-    } finally {
-      await close();
+    } catch (error, stackTrace) {
+      // Preserve the established callback contract: a progress/filter
+      // exception leaves a well-formed partial ZIP with completed entries.
+      // A missing source file or directory is different: its output is an
+      // incomplete artifact that should not survive an I/O failure.
+      if (error is FileSystemException) {
+        try {
+          await _output.close();
+        } catch (_) {}
+        try {
+          await File(outputPath).delete();
+        } catch (_) {}
+      } else {
+        try {
+          await close();
+        } catch (_) {}
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
+    await close();
   }
 
   /// Composes the path (target) of the Zip file after a [Directory] is zipped.
