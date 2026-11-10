@@ -18,9 +18,14 @@ void main() {
     final out = p.join(root.path, 'archive.zip');
 
     await expectLater(
-      ZipFileEncoder().zipDirectory(input, filename: out,
-          filter: (entry, progress) => throw StateError('test failure')),
-      throwsA(isA<StateError>()),
+      ZipFileEncoder().zipDirectory(input, filename: out, filter: (entry, progress) {
+        if (entry is File) {
+          // Force a real source I/O error after ZIP output was created.
+          entry.deleteSync();
+        }
+        return ZipFileOperation.include;
+      }),
+      throwsA(isA<FileSystemException>()),
     );
     expect(File(out).existsSync(), isFalse);
   });
