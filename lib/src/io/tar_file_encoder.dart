@@ -6,8 +6,9 @@ import '../archive/archive_file.dart';
 import '../codecs/tar_encoder.dart';
 import '../codecs/zlib/_zlib_encoder_base.dart';
 import '../codecs/zstd/zstd_chunked.dart';
-import '../codecs/zstd/zstd_constants.dart';
+import '../codecs/zstd/zstd_level_params.dart';
 import '../util/chunked_sink.dart';
+import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
 import 'zip_file_progress.dart';
 
