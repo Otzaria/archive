@@ -3,8 +3,9 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 import '../archive/archive_file.dart';
-import '../codecs/gzip_encoder.dart';
 import '../codecs/tar_encoder.dart';
+import '../codecs/zlib/_zlib_encoder_base.dart';
+import '../util/chunked_sink.dart';
 import '../codecs/zstd_encoder.dart';
 import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
@@ -30,8 +31,19 @@ class TarFileEncoder {
     final tgzPath = filename ?? '$dirPath.tar.gz';
     final tzstPath = filename ?? '$dirPath.tar.zst';
 
+    if (compression == gzip) {
+      await _tarDirectoryGzip(
+        dir,
+        tgzPath,
+        level: level,
+        followLinks: followLinks,
+        filter: filter,
+      );
+      return;
+    }
+
     Directory? tempDir;
-    if (compression == gzip || compression == zstd) {
+    if (compression == zstd) {
       tempDir = await Directory.systemTemp.createTemp('dart_archive');
       tarPath = '${tempDir.path}/temp.tar';
     }
@@ -46,18 +58,7 @@ class TarFileEncoder {
         await close();
       }
 
-      if (compression == gzip) {
-        InputFileStream? input;
-        OutputFileStream? output;
-        try {
-          input = InputFileStream(tarPath);
-          output = OutputFileStream(tgzPath);
-          GZipEncoder().encodeStream(input, output, level: level ?? 6);
-        } finally {
-          await input?.close();
-          await output?.close();
-        }
-      } else if (compression == zstd) {
+      if (compression == zstd) {
         InputFileStream? input;
         OutputFileStream? output;
         try {
@@ -72,6 +73,52 @@ class TarFileEncoder {
       }
     } finally {
       await tempDir?.delete(recursive: true);
+    }
+  }
+
+  /// Compress TAR bytes as the entries are added, without writing an
+  /// uncompressed intermediate TAR to the system temp directory.
+  ///
+  /// The native GZip encoder consumes each chunk synchronously; only its
+  /// compressed output is buffered by the file stream.
+  Future<void> _tarDirectoryGzip(
+    Directory dir,
+    String outputPath, {
+    int? level,
+    required bool followLinks,
+    ZipFileProgress? filter,
+  }) async {
+    tarPath = outputPath;
+    final output = OutputFileStream(outputPath);
+    _output = output;
+    final gzip = GZipCodec(level: level ?? 6)
+        .encoder
+        .startChunkedConversion(ZLibOutputSink(output));
+    final tarSink = SinkOutputStream(gzip);
+    _encoder = TarEncoder()..start(tarSink);
+
+    try {
+      await addDirectory(
+        dir,
+        followLinks: followLinks,
+        filter: filter,
+      );
+      _encoder.finish();
+      // Emits the GZip checksum and ISIZE trailer after TAR's end markers.
+      tarSink.closeSync();
+      await output.close();
+    } catch (_) {
+      // A failed entry must not leave a misleading partial archive behind.
+      try {
+        tarSink.closeSync();
+      } catch (_) {}
+      try {
+        await output.close();
+      } catch (_) {}
+      try {
+        await File(outputPath).delete();
+      } catch (_) {}
+      rethrow;
     }
   }
 
