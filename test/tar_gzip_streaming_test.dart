@@ -62,9 +62,13 @@ void main() {
 
     final invalid = p.join(base.path, 'invalid.tar.zst');
     await expectLater(
-      TarFileEncoder().tarDirectory(source,
-          compression: TarFileEncoder.zstd, filename: invalid, level: 500),
-      throwsA(anything),
+      TarFileEncoder().tarDirectory(
+        source,
+        compression: TarFileEncoder.zstd,
+        filename: invalid,
+        filter: (entry, progress) => throw StateError('abort'),
+      ),
+      throwsA(isA<StateError>()),
     );
     expect(File(invalid).existsSync(), isFalse);
   });
