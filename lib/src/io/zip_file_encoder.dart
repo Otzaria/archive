@@ -28,11 +28,9 @@ class ZipFileEncoder {
       void Function(double)? onProgress,
       DateTime? modified,
       ZipFileProgress? filter}) async {
-    create(
-      _composeZipDirectoryPath(dir: dir, filename: filename),
-      level: level ??= gzip,
-      modified: modified,
-    );
+    final outputPath =
+        _composeZipDirectoryPath(dir: dir, filename: filename);
+    create(outputPath, level: level ??= gzip, modified: modified);
 
     try {
       await addDirectory(dir,
@@ -41,8 +39,18 @@ class ZipFileEncoder {
           followLinks: followLinks,
           onProgress: onProgress,
           filter: filter);
-    } finally {
       await close();
+    } catch (_) {
+      // A failed directory scan or encoder finalization must not leave a
+      // readable but incomplete archive at the requested destination.
+      // Closing the file handle directly also works if endEncode failed.
+      try {
+        await _output.close();
+      } catch (_) {}
+      try {
+        await File(outputPath).delete();
+      } catch (_) {}
+      rethrow;
     }
   }
 
