@@ -9,6 +9,33 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  for (final compression in [TarFileEncoder.gzip, TarFileEncoder.zstd]) {
+    test('compressed output inside the source is not archived: $compression',
+        () async {
+      final base = Directory.systemTemp.createTempSync('archive-self-output-');
+      addTearDown(() => base.deleteSync(recursive: true));
+      final source = Directory(p.join(base.path, 'source'))..createSync();
+      File(p.join(source.path, 'keep.txt')).writeAsStringSync('keep');
+      final output = p.join(source.path, 'result.archive');
+      final observed = <String>[];
+      final progress = <double>[];
+      await TarFileEncoder().tarDirectory(source,
+          compression: compression, filename: output, filter: (file, fraction) {
+        observed.add(p.basename(file.path));
+        progress.add(fraction);
+        return ZipFileOperation.include;
+      });
+      final compressed = File(output).readAsBytesSync();
+      final decoded = compression == TarFileEncoder.gzip
+          ? GZipDecoder().decodeBytes(compressed, verify: true)
+          : ZstdDecoder().decodeBytes(compressed, verify: true);
+      final tar = TarDecoder().decodeBytes(decoded, verify: true);
+      expect(tar.files.map((file) => file.name), ['source/keep.txt']);
+      expect(observed, ['keep.txt']);
+      expect(progress, [1.0]);
+    });
+  }
+
   test('streamed tar.zst roundtrips a multi-megabyte file with checksum',
       () async {
     final base = Directory.systemTemp.createTempSync('archive-tzst-stream-');
@@ -38,7 +65,8 @@ void main() {
     expect(tar.findFile('source/nested/large.bin')?.readBytes(), payload);
   });
 
-  test('streamed tar.zst preserves filters and removes failed output', () async {
+  test('streamed tar.zst preserves filters and removes failed output',
+      () async {
     final base = Directory.systemTemp.createTempSync('archive-tzst-filter-');
     addTearDown(() => base.deleteSync(recursive: true));
     final source = Directory(p.join(base.path, 'source'))..createSync();
@@ -53,11 +81,10 @@ void main() {
           ? ZipFileOperation.skip
           : ZipFileOperation.include,
     );
-    final decoded = ZstdDecoder().decodeBytes(
-        File(output).readAsBytesSync(), verify: true);
+    final decoded =
+        ZstdDecoder().decodeBytes(File(output).readAsBytesSync(), verify: true);
     final archive = TarDecoder().decodeBytes(decoded);
-    expect(archive.findFile('source/keep.txt')?.readBytes(),
-        'keep'.codeUnits);
+    expect(archive.findFile('source/keep.txt')?.readBytes(), 'keep'.codeUnits);
     expect(archive.findFile('source/skip.txt'), isNull);
 
     final invalid = p.join(base.path, 'invalid.tar.zst');
@@ -84,12 +111,11 @@ void main() {
       bytes[i] = (i * 37 + i ~/ 1003) & 0xff;
     }
     File(p.join(source.path, 'large.bin')).writeAsBytesSync(bytes);
-    File(p.join(source.path, 'nested', 'hebrew.txt'))
-        .writeAsStringSync('שלום');
+    File(p.join(source.path, 'nested', 'hebrew.txt')).writeAsStringSync('שלום');
 
     final out = p.join(base.path, 'books.tar.gz');
-    await TarFileEncoder().tarDirectory(source,
-        compression: TarFileEncoder.gzip, filename: out);
+    await TarFileEncoder()
+        .tarDirectory(source, compression: TarFileEncoder.gzip, filename: out);
 
     final archive = TarDecoder().decodeBytes(
       GZipDecoder().decodeBytes(File(out).readAsBytesSync(), verify: true),
@@ -113,25 +139,23 @@ void main() {
       await TarFileEncoder().tarDirectory(source,
           compression: TarFileEncoder.gzip,
           level: level,
-          filename: out,
-          filter: (file, progress) {
-            observed.add(progress);
-            return p.basename(file.path) == 'skip.txt'
-                ? ZipFileOperation.skip
-                : ZipFileOperation.include;
-          });
+          filename: out, filter: (file, progress) {
+        observed.add(progress);
+        return p.basename(file.path) == 'skip.txt'
+            ? ZipFileOperation.skip
+            : ZipFileOperation.include;
+      });
       final archive = TarDecoder().decodeBytes(
           GZipDecoder().decodeBytes(File(out).readAsBytesSync(), verify: true));
-      expect(archive.findFile('source/keep.txt')?.readBytes(),
-          'keep'.codeUnits);
+      expect(
+          archive.findFile('source/keep.txt')?.readBytes(), 'keep'.codeUnits);
       expect(archive.findFile('source/skip.txt'), isNull);
     }
     expect(observed, isNotEmpty);
     expect(observed.last, 1.0);
   });
 
-  test('invalid compression level does not leave a partial archive',
-      () async {
+  test('invalid compression level does not leave a partial archive', () async {
     final base = Directory.systemTemp.createTempSync('archive-tgz-level-');
     addTearDown(() => base.deleteSync(recursive: true));
     final source = Directory(p.join(base.path, 'source'))..createSync();

@@ -119,6 +119,8 @@ class TarFileEncoder {
       bool includeDirName = true,
       ZipFileProgress? filter}) async {
     final files = dir.listSync(recursive: true, followLinks: followLinks);
+    files.removeWhere((file) =>
+        path.equals(path.absolute(file.path), path.absolute(tarPath)));
 
     final dirName = path.basename(dir.path);
     final numFiles = files.length;
