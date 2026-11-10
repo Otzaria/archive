@@ -920,10 +920,8 @@ class BZip2Decoder {
     }
   }
 
-  // A concatenated bzip2 payload can contain thousands of independent
-  // members. Keep the block table across those members instead of allocating
-  // and discarding a new 64 KiB array for every one of them. Every valid
-  // block rewrites the active table prefix before reading it.
+  // Reuse storage across members; each block rewrites its active table prefix
+  // before reading it, so clearing the full allocation is unnecessary.
   void _prepareTt() {
     if (_hasTt) {
       return;

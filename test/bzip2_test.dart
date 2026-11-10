@@ -61,26 +61,39 @@ void main() {
     final small = Uint8List.fromList(List.generate(83, (i) => i & 0xff));
     final large = Uint8List.fromList(
         List.generate(150000, (i) => (i * 73 + (i ~/ 251)) & 0xff));
-    final smallBz = BZip2Encoder().encodeBytes(small);
+    final smallBz = BZip2Encoder().encodeBytes(small, blockSize100k: 1);
     final largeBz = BZip2Encoder().encodeBytes(large);
+    final emptyBz = BZip2Encoder().encodeBytes([], blockSize100k: 3);
 
     final multi = Uint8List.fromList([
       ...largeBz,
+      ...emptyBz,
       for (var i = 0; i < 64; i++) ...smallBz,
     ]);
     final expected = Uint8List.fromList([
       ...large,
       for (var i = 0; i < 64; i++) ...small,
     ]);
-    expect(decoder.decodeBytes(multi, verify: true, throwOnError: true),
-        expected);
+    expect(
+        decoder.decodeBytes(multi, verify: true, throwOnError: true), expected);
 
     // Reusing a decoder instance for a smaller archive must not expose
     // unwritten values from its earlier, larger table.
-    expect(decoder.decodeBytes(smallBz, verify: true, throwOnError: true),
-        small);
-    expect(decoder.decodeBytes(largeBz, verify: true, throwOnError: true),
-        large);
+    expect(
+        decoder.decodeBytes(smallBz, verify: true, throwOnError: true), small);
+    expect(
+        decoder.decodeBytes(largeBz, verify: true, throwOnError: true), large);
+
+    final badChecksum = Uint8List.fromList(largeBz)..[10] ^= 1;
+    for (final malformed in [
+      largeBz.sublist(0, largeBz.length ~/ 2),
+      badChecksum
+    ]) {
+      expect(() => decoder.decodeBytes(malformed, verify: true),
+          throwsA(isA<ArchiveException>()));
+      expect(decoder.decodeBytes(smallBz, verify: true), small);
+      expect(decoder.decodeBytes(largeBz, verify: true), large);
+    }
   });
 
   test('decode', testOn: 'vm', () {
