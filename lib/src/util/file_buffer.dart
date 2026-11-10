@@ -267,8 +267,7 @@ class FileBuffer {
     if (position < 0) {
       throw RangeError.range(position, 0, _fileSize, 'position');
     }
-    // Clamp both the direct-read and the buffered paths. Previously a short
-    // buffered read near EOF could return stale bytes left in the buffer.
+    // Clamp both paths so a short tail cannot expose stale buffered bytes.
     if (position >= _fileSize || count <= 0) {
       return Uint8List(0);
     }

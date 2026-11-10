@@ -63,6 +63,15 @@ void main() {
       expect(() => buffer.readBytes(-1, 4), throwsRangeError);
     });
 
+    test('readBytes returns only actual bytes when the file ends early', () {
+      final buffer =
+          FileBuffer(_OverstatedLengthHandle(testPath), bufferSize: 8);
+      addTearDown(buffer.closeSync);
+      expect(buffer.readBytes(118, 8), testData.sublist(118));
+      expect(buffer.readBytes(80, 60), testData.sublist(80));
+      expect(buffer.readBytes(125, 8), isEmpty);
+    });
+
     test('negative count reads same bytes from file and memory', () {
       final file = InputFileStream(testPath)..readBytes(10);
       addTearDown(file.closeSync);
@@ -493,4 +502,11 @@ class _ShortReadHandle extends _CountingHandle {
     final count = length ?? buffer.length;
     return super.readInto(buffer, count > 3 ? 3 : count);
   }
+}
+
+class _OverstatedLengthHandle extends _ShortReadHandle {
+  _OverstatedLengthHandle(super.path);
+
+  @override
+  int get length => super.length + 20;
 }
