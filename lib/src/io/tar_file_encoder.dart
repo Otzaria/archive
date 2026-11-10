@@ -5,9 +5,9 @@ import 'package:path/path.dart' as path;
 import '../archive/archive_file.dart';
 import '../codecs/tar_encoder.dart';
 import '../codecs/zlib/_zlib_encoder_base.dart';
-import '../codecs/zstd_encoder.dart';
+import '../codecs/zstd/zstd_chunked.dart';
+import '../codecs/zstd/zstd_constants.dart';
 import '../util/chunked_sink.dart';
-import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
 import 'zip_file_progress.dart';
 
@@ -27,14 +27,12 @@ class TarFileEncoder {
       int? level,
       ZipFileProgress? filter}) async {
     final dirPath = dir.path;
-    var tarPath = filename ?? '$dirPath.tar';
-    final tgzPath = filename ?? '$dirPath.tar.gz';
-    final tzstPath = filename ?? '$dirPath.tar.zst';
-
-    if (compression == gzip) {
-      await _tarDirectoryGzip(
+    if (compression == gzip || compression == zstd) {
+      await _tarDirectoryCompressed(
         dir,
-        tgzPath,
+        filename ??
+            (compression == gzip ? '$dirPath.tar.gz' : '$dirPath.tar.zst'),
+        compression: compression,
         level: level,
         followLinks: followLinks,
         filter: filter,
@@ -42,48 +40,21 @@ class TarFileEncoder {
       return;
     }
 
-    Directory? tempDir;
-    if (compression == zstd) {
-      tempDir = await Directory.systemTemp.createTemp('dart_archive');
-      tarPath = '${tempDir.path}/temp.tar';
-    }
-
-    // Encode a directory from disk to disk, no memory
+    // An uncompressed TAR still writes directly to the target file.
+    open(filename ?? '$dirPath.tar');
     try {
-      open(tarPath);
-      try {
-        await addDirectory(Directory(dirPath),
-            followLinks: followLinks, filter: filter);
-      } finally {
-        await close();
-      }
-
-      if (compression == zstd) {
-        InputFileStream? input;
-        OutputFileStream? output;
-        try {
-          input = InputFileStream(tarPath);
-          output = OutputFileStream(tzstPath);
-          ZstdEncoder()
-              .encodeStream(input, output, level: level, checksum: true);
-        } finally {
-          await input?.close();
-          await output?.close();
-        }
-      }
+      await addDirectory(dir, followLinks: followLinks, filter: filter);
     } finally {
-      await tempDir?.delete(recursive: true);
+      await close();
     }
   }
 
-  /// Compress TAR bytes as the entries are added, without writing an
-  /// uncompressed intermediate TAR to the system temp directory.
-  ///
-  /// The native GZip encoder consumes each chunk synchronously; only its
-  /// compressed output is buffered by the file stream.
-  Future<void> _tarDirectoryGzip(
+  /// Compress each TAR chunk as it is created. Neither gzip nor zstd needs
+  /// an entire temporary TAR on disk or in memory.
+  Future<void> _tarDirectoryCompressed(
     Directory dir,
     String outputPath, {
+    required int compression,
     int? level,
     required bool followLinks,
     ZipFileProgress? filter,
@@ -93,10 +64,19 @@ class TarFileEncoder {
     _output = output;
     SinkOutputStream? tarSink;
     try {
-      final gzip = GZipCodec(level: level ?? 6)
-          .encoder
-          .startChunkedConversion(ZLibOutputSink(output));
-      tarSink = SinkOutputStream(gzip);
+      if (compression == gzip) {
+        final gzipEncoder = GZipCodec(level: level ?? 6)
+            .encoder
+            .startChunkedConversion(ZLibOutputSink(output));
+        tarSink = SinkOutputStream(gzipEncoder);
+      } else {
+        final zstdEncoder = ZstdChunkedEncoder(
+          ZLibOutputSink(output),
+          level: level ?? zstdDefaultLevel,
+          checksum: true,
+        );
+        tarSink = SinkOutputStream(zstdEncoder);
+      }
       _encoder = TarEncoder()..start(tarSink);
 
       await addDirectory(
@@ -105,12 +85,12 @@ class TarFileEncoder {
         filter: filter,
       );
       _encoder.finish();
-      // Emits the GZip checksum and ISIZE trailer after TAR's end markers.
+      // Finalizes the compressed frame, checksums and any trailing bytes.
       tarSink.closeSync();
       await output.close();
     } catch (_) {
-      // Even creating a native encoder can throw (for an invalid compression
-      // level). Never leave its output handle or a partial archive behind.
+      // A failed entry or encoder initialization must never leave a partial
+      // archive at the destination.
       try {
         tarSink?.closeSync();
       } catch (_) {}
