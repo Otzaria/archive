@@ -149,8 +149,9 @@ class OutputMemoryStream extends OutputStream {
     if (newLength < minLength) {
       newLength = minLength;
     }
-    final newBuffer = Uint8List(newLength)
-      ..setRange(0, _buffer.length, _buffer);
+    // The unwritten tail of the previous allocation is not data. Copying
+    // the entire capacity can move hundreds of megabytes of unused bytes.
+    final newBuffer = Uint8List(newLength)..setRange(0, length, _buffer);
     _buffer = newBuffer;
   }
 }
