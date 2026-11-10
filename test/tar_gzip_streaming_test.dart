@@ -9,6 +9,66 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  test('streamed tar.zst roundtrips a multi-megabyte file with checksum',
+      () async {
+    final base = Directory.systemTemp.createTempSync('archive-tzst-stream-');
+    addTearDown(() => base.deleteSync(recursive: true));
+    final source = Directory(p.join(base.path, 'source'))..createSync();
+    Directory(p.join(source.path, 'nested')).createSync();
+    final payload = Uint8List(3 * 1024 * 1024);
+    for (var i = 0; i < payload.length; i++) {
+      payload[i] = (i * 37 + i ~/ 701) & 0xff;
+    }
+    File(p.join(source.path, 'nested', 'large.bin')).writeAsBytesSync(payload);
+    final output = p.join(base.path, 'output.tar.zst');
+
+    await TarFileEncoder().tarDirectory(
+      source,
+      compression: TarFileEncoder.zstd,
+      filename: output,
+      level: 3,
+    );
+
+    final decoded = ZstdDecoder().decodeBytes(
+      File(output).readAsBytesSync(),
+      verify: true,
+      throwOnError: true,
+    );
+    final tar = TarDecoder().decodeBytes(decoded, verify: true);
+    expect(tar.findFile('source/nested/large.bin')?.readBytes(), payload);
+  });
+
+  test('streamed tar.zst preserves filters and removes failed output', () async {
+    final base = Directory.systemTemp.createTempSync('archive-tzst-filter-');
+    addTearDown(() => base.deleteSync(recursive: true));
+    final source = Directory(p.join(base.path, 'source'))..createSync();
+    File(p.join(source.path, 'keep.txt')).writeAsStringSync('keep');
+    File(p.join(source.path, 'skip.txt')).writeAsStringSync('skip');
+    final output = p.join(base.path, 'filtered.tar.zst');
+    await TarFileEncoder().tarDirectory(
+      source,
+      compression: TarFileEncoder.zstd,
+      filename: output,
+      filter: (entry, progress) => p.basename(entry.path) == 'skip.txt'
+          ? ZipFileOperation.skip
+          : ZipFileOperation.include,
+    );
+    final decoded = ZstdDecoder().decodeBytes(
+        File(output).readAsBytesSync(), verify: true);
+    final archive = TarDecoder().decodeBytes(decoded);
+    expect(archive.findFile('source/keep.txt')?.readBytes(),
+        'keep'.codeUnits);
+    expect(archive.findFile('source/skip.txt'), isNull);
+
+    final invalid = p.join(base.path, 'invalid.tar.zst');
+    await expectLater(
+      TarFileEncoder().tarDirectory(source,
+          compression: TarFileEncoder.zstd, filename: invalid, level: 500),
+      throwsA(anything),
+    );
+    expect(File(invalid).existsSync(), isFalse);
+  });
+
   test('streamed tar.gz roundtrips nested files and a large asset', () async {
     final base = Directory.systemTemp.createTempSync('archive-tgz-stream-');
     addTearDown(() => base.deleteSync(recursive: true));
