@@ -62,7 +62,8 @@ void main() {
       throwOnError: true,
     );
     final tar = TarDecoder().decodeBytes(decoded, verify: true);
-    expect(tar.findFile('source/nested/large.bin')?.readBytes(), payload);
+    expect(tar.findFile('source/${p.join('nested', 'large.bin')}')?.readBytes(),
+        payload);
   });
 
   test('streamed tar.zst preserves filters and removes failed output',
@@ -122,7 +123,10 @@ void main() {
       verify: true,
     );
     expect(archive.findFile('source/large.bin')?.readBytes(), bytes);
-    expect(archive.findFile('source/nested/hebrew.txt')?.readBytes(),
+    expect(
+        archive
+            .findFile('source/${p.join('nested', 'hebrew.txt')}')
+            ?.readBytes(),
         File(p.join(source.path, 'nested', 'hebrew.txt')).readAsBytesSync());
   });
 
