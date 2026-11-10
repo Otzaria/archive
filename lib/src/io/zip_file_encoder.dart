@@ -39,19 +39,26 @@ class ZipFileEncoder {
           followLinks: followLinks,
           onProgress: onProgress,
           filter: filter);
-      await close();
-    } catch (_) {
-      // A failed directory scan or encoder finalization must not leave a
-      // readable but incomplete archive at the requested destination.
-      // Closing the file handle directly also works if endEncode failed.
-      try {
-        await _output.close();
-      } catch (_) {}
-      try {
-        await File(outputPath).delete();
-      } catch (_) {}
-      rethrow;
+    } catch (error, stackTrace) {
+      // Preserve the established callback contract: a progress/filter
+      // exception leaves a well-formed partial ZIP with completed entries.
+      // A missing source file or directory is different: its output is an
+      // incomplete artifact that should not survive an I/O failure.
+      if (error is FileSystemException) {
+        try {
+          await _output.close();
+        } catch (_) {}
+        try {
+          await File(outputPath).delete();
+        } catch (_) {}
+      } else {
+        try {
+          await close();
+        } catch (_) {}
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
+    await close();
   }
 
   /// Composes the path (target) of the Zip file after a [Directory] is zipped.
