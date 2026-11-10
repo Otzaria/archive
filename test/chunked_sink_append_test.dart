@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:archive/src/util/chunked_sink.dart';
 import 'package:test/test.dart';
 
 class _RecordSink extends ChunkedSink {
