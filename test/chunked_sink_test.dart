@@ -348,6 +348,17 @@ void main() {
     expect(sink.offsets, [8, 8]);
   });
 
+  test('ChunkedSink still compacts when input exceeds tail capacity', () {
+    final sink = _HeaderThenBody(_Held());
+    for (final size in [4, 6, 4]) {
+      sink.add(Uint8List(size));
+    }
+    // The buffer starts at 64 KiB. This append cannot fit after the held
+    // bytes, so compaction (or growth) must make the active view start at 0.
+    sink.add(Uint8List(1 << 16));
+    expect(sink.offsets.last, 0);
+  });
+
   test('bound converter decodes no more units while listener is paused',
       () async {
     final converter = _UnitsConverter();
