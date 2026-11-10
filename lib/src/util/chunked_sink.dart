@@ -168,8 +168,11 @@ abstract class ChunkedSink extends ByteConversionSink {
 
   void _append(Uint8List chunk) {
     final held = _end - _at;
-    if (_at < held &&
-        identical(_carry, _owned) &&
+    // Bytes before _at were consumed, but they need not be moved while the
+    // incoming bytes still fit at the tail. Repeated tiny input chunks used
+    // to compact (or allocate) after almost every parsed record because
+    // _at >= held, even with plenty of unused capacity at the end.
+    if (identical(_carry, _owned) &&
         _end + chunk.length <= _owned.length) {
       _owned.setRange(_end, _end + chunk.length, chunk);
       _end += chunk.length;
