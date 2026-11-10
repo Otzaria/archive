@@ -91,13 +91,14 @@ class TarFileEncoder {
     tarPath = outputPath;
     final output = OutputFileStream(outputPath);
     _output = output;
-    final gzip = GZipCodec(level: level ?? 6)
-        .encoder
-        .startChunkedConversion(ZLibOutputSink(output));
-    final tarSink = SinkOutputStream(gzip);
-    _encoder = TarEncoder()..start(tarSink);
-
+    SinkOutputStream? tarSink;
     try {
+      final gzip = GZipCodec(level: level ?? 6)
+          .encoder
+          .startChunkedConversion(ZLibOutputSink(output));
+      tarSink = SinkOutputStream(gzip);
+      _encoder = TarEncoder()..start(tarSink);
+
       await addDirectory(
         dir,
         followLinks: followLinks,
@@ -108,9 +109,10 @@ class TarFileEncoder {
       tarSink.closeSync();
       await output.close();
     } catch (_) {
-      // A failed entry must not leave a misleading partial archive behind.
+      // Even creating a native encoder can throw (for an invalid compression
+      // level). Never leave its output handle or a partial archive behind.
       try {
-        tarSink.closeSync();
+        tarSink?.closeSync();
       } catch (_) {}
       try {
         await output.close();
