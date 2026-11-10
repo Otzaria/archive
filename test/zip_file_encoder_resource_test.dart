@@ -54,8 +54,7 @@ void main() {
     Directory(p.join(source.path, 'sub')).createSync();
     File(p.join(source.path, 'keep.txt')).writeAsStringSync('keep');
     File(p.join(source.path, 'skip.txt')).writeAsStringSync('skip');
-    File(p.join(source.path, 'sub', 'nested.txt'))
-        .writeAsStringSync('nested');
+    File(p.join(source.path, 'sub', 'nested.txt')).writeAsStringSync('nested');
 
     final progress = <double>[];
     final output = p.join(dir.path, 'filtered.zip');
@@ -76,8 +75,7 @@ void main() {
       verify: true,
     );
     expect(decoded.findFile('keep.txt')?.readBytes(), 'keep'.codeUnits);
-    expect(decoded.findFile('sub/nested.txt')?.readBytes(),
-        'nested'.codeUnits);
+    expect(decoded.findFile('sub/nested.txt')?.readBytes(), 'nested'.codeUnits);
     expect(decoded.findFile('skip.txt'), isNull);
     expect(progress, isNotEmpty);
 
@@ -86,5 +84,34 @@ void main() {
     await ZipFileEncoder().zipDirectory(source, filename: unfiltered);
     final all = ZipDecoder().decodeBytes(File(unfiltered).readAsBytesSync());
     expect(all.findFile('skip.txt')?.readBytes(), 'skip'.codeUnits);
+  });
+
+  test('async cancellation finalizes a valid ZIP containing completed entries',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('archive-zip-cancel-');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final source = Directory(p.join(dir.path, 'source'))..createSync();
+    for (var i = 0; i < 3; i++) {
+      File(p.join(source.path, '$i.txt')).writeAsStringSync('$i');
+    }
+    final output = File(p.join(dir.path, 'cancelled.zip'));
+    var calls = 0;
+    var progressCalls = 0;
+    await ZipFileEncoder().zipDirectory(source,
+        filename: output.path,
+        onProgress: (_) => progressCalls++,
+        filter: (_, progress) {
+          expect(progress, closeTo((calls + 1) / 3, 0.00001));
+          return ++calls == 2
+              ? ZipFileOperation.cancel
+              : ZipFileOperation.include;
+        });
+    expect(calls, 2);
+    expect(progressCalls, 1);
+    final archive =
+        ZipDecoder().decodeBytes(output.readAsBytesSync(), verify: true);
+    expect(archive.files, hasLength(1));
+    expect(archive.files.single.readBytes(),
+        p.basenameWithoutExtension(archive.files.single.name).codeUnits);
   });
 }
