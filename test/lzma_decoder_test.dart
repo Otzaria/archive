@@ -45,6 +45,28 @@ void main() {
     expect(decoder.endMarkerSeen, isFalse);
   });
 
+  test('LZMA2 stored chunk refuses truncated content without zero padding',
+      () {
+    final decoder = LzmaDecoder()..reset(resetDictionary: true);
+    final cut = InputMemoryStream([10, 20, 30]);
+    expect(
+        () => decoder.decodeUncompressed(cut, 5),
+        throwsA(isA<ArchiveException>().having(
+            (e) => e.message, 'message', contains('Truncated LZMA2'))));
+    // A failed uncompressed chunk must not advance the decoder dictionary.
+    expect(decoder.decodeUncompressed(InputMemoryStream([40, 50]), 2),
+        [40, 50]);
+  });
+
+  test('LZMA2 stored chunk refuses invalid negative sizes', () {
+    final decoder = LzmaDecoder();
+    expect(
+        () => decoder.decodeUncompressed(InputMemoryStream([1, 2]), -1),
+        throwsA(isA<ArchiveException>()));
+    expect(decoder.decodeUncompressed(InputMemoryStream([7, 8]), 2),
+        [7, 8]);
+  });
+
   test('LZMA2 chunk with an end marker is rejected', () {
     // LZMA2 does not allow the marker, so a chunk that stops at one short of
     // its declared size is damaged, as liblzma reports it
