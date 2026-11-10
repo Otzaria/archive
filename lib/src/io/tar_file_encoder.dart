@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 import '../archive/archive_file.dart';
-import '../codecs/gzip_encoder.dart';
 import '../codecs/tar_encoder.dart';
-import '../codecs/zstd_encoder.dart';
+import '../codecs/zlib/_zlib_encoder_base.dart';
+import '../codecs/zstd/zstd_chunked.dart';
+import '../codecs/zstd/zstd_level_params.dart';
+import '../util/chunked_sink.dart';
 import '../util/input_file_stream.dart';
 import '../util/output_file_stream.dart';
 import 'zip_file_progress.dart';
@@ -26,52 +28,80 @@ class TarFileEncoder {
       int? level,
       ZipFileProgress? filter}) async {
     final dirPath = dir.path;
-    var tarPath = filename ?? '$dirPath.tar';
-    final tgzPath = filename ?? '$dirPath.tar.gz';
-    final tzstPath = filename ?? '$dirPath.tar.zst';
-
-    Directory? tempDir;
     if (compression == gzip || compression == zstd) {
-      tempDir = await Directory.systemTemp.createTemp('dart_archive');
-      tarPath = '${tempDir.path}/temp.tar';
+      await _tarDirectoryCompressed(
+        dir,
+        filename ??
+            (compression == gzip ? '$dirPath.tar.gz' : '$dirPath.tar.zst'),
+        compression: compression,
+        level: level,
+        followLinks: followLinks,
+        filter: filter,
+      );
+      return;
     }
 
-    // Encode a directory from disk to disk, no memory
+    // An uncompressed TAR still writes directly to the target file.
+    open(filename ?? '$dirPath.tar');
     try {
-      open(tarPath);
-      try {
-        await addDirectory(Directory(dirPath),
-            followLinks: followLinks, filter: filter);
-      } finally {
-        await close();
-      }
-
-      if (compression == gzip) {
-        InputFileStream? input;
-        OutputFileStream? output;
-        try {
-          input = InputFileStream(tarPath);
-          output = OutputFileStream(tgzPath);
-          GZipEncoder().encodeStream(input, output, level: level ?? 6);
-        } finally {
-          await input?.close();
-          await output?.close();
-        }
-      } else if (compression == zstd) {
-        InputFileStream? input;
-        OutputFileStream? output;
-        try {
-          input = InputFileStream(tarPath);
-          output = OutputFileStream(tzstPath);
-          ZstdEncoder()
-              .encodeStream(input, output, level: level, checksum: true);
-        } finally {
-          await input?.close();
-          await output?.close();
-        }
-      }
+      await addDirectory(dir, followLinks: followLinks, filter: filter);
     } finally {
-      await tempDir?.delete(recursive: true);
+      await close();
+    }
+  }
+
+  /// Compress each TAR chunk as it is created. Neither gzip nor zstd needs
+  /// an entire temporary TAR on disk or in memory.
+  Future<void> _tarDirectoryCompressed(
+    Directory dir,
+    String outputPath, {
+    required int compression,
+    int? level,
+    required bool followLinks,
+    ZipFileProgress? filter,
+  }) async {
+    tarPath = outputPath;
+    final output = OutputFileStream(outputPath);
+    _output = output;
+    SinkOutputStream? tarSink;
+    try {
+      if (compression == gzip) {
+        final gzipEncoder = GZipCodec(level: level ?? 6)
+            .encoder
+            .startChunkedConversion(ZLibOutputSink(output));
+        tarSink = SinkOutputStream(gzipEncoder);
+      } else {
+        final zstdEncoder = ZstdChunkedEncoder(
+          ZLibOutputSink(output),
+          level: level ?? zstdDefaultLevel,
+          checksum: true,
+        );
+        tarSink = SinkOutputStream(zstdEncoder);
+      }
+      _encoder = TarEncoder()..start(tarSink);
+
+      await addDirectory(
+        dir,
+        followLinks: followLinks,
+        filter: filter,
+      );
+      _encoder.finish();
+      // Finalizes the compressed frame, checksums and any trailing bytes.
+      tarSink.closeSync();
+      await output.close();
+    } catch (_) {
+      // A failed entry or encoder initialization must never leave a partial
+      // archive at the destination.
+      try {
+        tarSink?.closeSync();
+      } catch (_) {}
+      try {
+        await output.close();
+      } catch (_) {}
+      try {
+        await File(outputPath).delete();
+      } catch (_) {}
+      rethrow;
     }
   }
 
@@ -88,21 +118,21 @@ class TarFileEncoder {
       {bool followLinks = true,
       bool includeDirName = true,
       ZipFileProgress? filter}) async {
-    // Enumerate lazily rather than allocating a list for every file in a
-    // large directory. Count asynchronously only when the filter needs the
-    // progress fraction.
+    Stream<FileSystemEntity> files() =>
+        dir.list(recursive: true, followLinks: followLinks).where((file) =>
+            !path.equals(path.absolute(file.path), path.absolute(tarPath)));
+
+    // Only filters need a preliminary count for progress fractions.
     var numFiles = 0;
     if (filter != null) {
-      await for (final _ in
-          dir.list(recursive: true, followLinks: followLinks)) {
+      await for (final _ in files()) {
         numFiles++;
       }
     }
 
     final dirName = path.basename(dir.path);
     var fileCount = 0;
-    await for (final file in
-        dir.list(recursive: true, followLinks: followLinks)) {
+    await for (final file in files()) {
       final progress = numFiles == 0 ? 0.0 : ++fileCount / numFiles;
       if (filter != null) {
         final operation = filter(file, progress);
@@ -132,7 +162,8 @@ class TarFileEncoder {
     try {
       final f =
           ArchiveFile.stream(filename ?? path.basename(file.path), fileStream);
-      f.lastModTime = (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
+      f.lastModTime =
+          (await file.lastModified()).millisecondsSinceEpoch ~/ 1000;
       f.mode = (await file.stat()).mode;
       _encoder.add(f);
     } finally {
