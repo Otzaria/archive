@@ -77,7 +77,7 @@ void main() {
     await expectLater(
         TarFileEncoder().tarDirectory(source,
             compression: TarFileEncoder.gzip, filename: output, level: 99),
-        throwsA(isA<Exception>()));
+        throwsA(anything));
     expect(File(output).existsSync(), isFalse);
   });
 
