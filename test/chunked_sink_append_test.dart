@@ -40,16 +40,19 @@ void main() {
   test('incremental parsing remains exact through repeated in-place appends',
       () {
     final bytes = Uint8List.fromList(
-      List<int>.generate(32768, (i) => (i * 71 + (i >> 4)) & 255),
+      List<int>.generate(256 * 1024, (i) => (i * 71 + (i >> 4)) & 255),
     );
 
-    _RecordSink parse(int chunkSize) {
+    _RecordSink parse(int chunkSize, {bool leadingByte = false}) {
       final sink = _RecordSink(_Collector(), 8);
-      for (var at = 0; at < bytes.length; at += chunkSize) {
-        final end = at + chunkSize < bytes.length
-            ? at + chunkSize
-            : bytes.length;
-        sink.addSlice(bytes, at, end, false);
+      if (leadingByte) sink.addSlice(bytes, 0, 1, false);
+      final reused = Uint8List(chunkSize + 4);
+      for (var at = leadingByte ? 1 : 0; at < bytes.length; at += chunkSize) {
+        final end =
+            at + chunkSize < bytes.length ? at + chunkSize : bytes.length;
+        reused.setRange(2, 2 + end - at, bytes, at);
+        sink.addSlice(reused, 2, 2 + end - at, false);
+        reused.fillRange(0, reused.length, 255);
       }
       sink.close();
       return sink;
@@ -57,6 +60,9 @@ void main() {
 
     final expected = parse(bytes.length);
     expect(expected.records, bytes.length ~/ 8);
+    final compacted = parse(8, leadingByte: true);
+    expect(compacted.records, expected.records);
+    expect(compacted.checksum, expected.checksum);
     for (final chunk in [1, 2, 3, 5, 7, 8, 11, 64, 4096]) {
       final got = parse(chunk);
       expect(got.records, expected.records, reason: 'chunk $chunk');

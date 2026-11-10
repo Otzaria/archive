@@ -342,9 +342,7 @@ void main() {
     for (final size in [4, 6, 4]) {
       sink.add(Uint8List(size));
     }
-    // The former implementation compacted the two held bytes to the front
-    // even though the incoming four bytes still fit after them. In-place
-    // append avoids an unnecessary setRange and preserves correct parsing.
+    // Two held bytes keep their offset while the new bytes fit at the tail.
     expect(sink.offsets, [8, 8]);
   });
 
