@@ -56,6 +56,33 @@ void main() {
     expect(BZip2Decoder().decodeBytes(bytes, verify: true), equals(data));
   });
 
+  test('concatenated bzip2 members reuse the same decoder block state', () {
+    final decoder = BZip2Decoder();
+    final small = Uint8List.fromList(List.generate(83, (i) => i & 0xff));
+    final large = Uint8List.fromList(
+        List.generate(150000, (i) => (i * 73 + (i ~/ 251)) & 0xff));
+    final smallBz = BZip2Encoder().encodeBytes(small);
+    final largeBz = BZip2Encoder().encodeBytes(large);
+
+    final multi = Uint8List.fromList([
+      ...largeBz,
+      for (var i = 0; i < 64; i++) ...smallBz,
+    ]);
+    final expected = Uint8List.fromList([
+      ...large,
+      for (var i = 0; i < 64; i++) ...small,
+    ]);
+    expect(decoder.decodeBytes(multi, verify: true, throwOnError: true),
+        expected);
+
+    // Reusing a decoder instance for a smaller archive must not expose
+    // unwritten values from its earlier, larger table.
+    expect(decoder.decodeBytes(smallBz, verify: true, throwOnError: true),
+        small);
+    expect(decoder.decodeBytes(largeBz, verify: true, throwOnError: true),
+        large);
+  });
+
   test('decode', testOn: 'vm', () {
     final orig = io.File(p.join('test/_data/bzip2/test.bz2')).readAsBytesSync();
 
