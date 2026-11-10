@@ -68,22 +68,30 @@ class OutputMemoryStream extends OutputStream {
 
   @override
   void writeStream(InputStream stream) {
-    while (length + stream.length > _buffer.length) {
-      _expandBuffer((length + stream.length) - _buffer.length);
-    }
-
     if (stream is InputMemoryStream) {
+      // An in-memory stream already provides direct access to its data.
+      final count = stream.length;
+      reserve(length + count);
       if (stream.buffer != null) {
         _buffer.setRange(
-            length, length + stream.length, stream.buffer!, stream.position);
+            length, length + count, stream.buffer!, stream.position);
       }
-    } else {
-      final bytes = stream.toUint8List();
-      _buffer.setRange(length, length + bytes.length, bytes, 0);
-      length += bytes.length;
+      length += count;
       return;
     }
-    length += stream.length;
+
+    // Avoid querying the remaining length of a lazy decoder: it would decode
+    // its entire output before copying the first byte. Copy incrementally
+    // from a view so the source stream's position is left unchanged.
+    final reader = stream.subset(position: stream.position);
+    final scratch = Uint8List(64 * 1024);
+    while (!reader.isEOS) {
+      final got = reader.readInto(scratch, 0, scratch.length);
+      if (got <= 0) {
+        break;
+      }
+      writeBytes(scratch, length: got);
+    }
   }
 
   @override
