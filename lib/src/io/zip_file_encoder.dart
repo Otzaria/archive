@@ -28,23 +28,34 @@ class ZipFileEncoder {
       void Function(double)? onProgress,
       DateTime? modified,
       ZipFileProgress? filter}) async {
-    final outputPath =
-        _composeZipDirectoryPath(dir: dir, filename: filename);
+    final outputPath = _composeZipDirectoryPath(dir: dir, filename: filename);
     create(outputPath, level: level ??= gzip, modified: modified);
+
+    Object? callbackError;
+    T callCallback<T>(T Function() callback) {
+      try {
+        return callback();
+      } catch (error) {
+        callbackError = error;
+        rethrow;
+      }
+    }
 
     try {
       await addDirectory(dir,
           includeDirName: false,
           level: level,
           followLinks: followLinks,
-          onProgress: onProgress,
-          filter: filter);
+          onProgress: onProgress == null
+              ? null
+              : (value) => callCallback(() => onProgress(value)),
+          filter: filter == null
+              ? null
+              : (entry, value) => callCallback(() => filter(entry, value)));
     } catch (error, stackTrace) {
-      // Preserve the established callback contract: a progress/filter
-      // exception leaves a well-formed partial ZIP with completed entries.
-      // A missing source file or directory is different: its output is an
-      // incomplete artifact that should not survive an I/O failure.
-      if (error is FileSystemException) {
+      // Callback failures retain a valid ZIP of the completed entries;
+      // source I/O failures must remove the incomplete output.
+      if (error is FileSystemException && !identical(error, callbackError)) {
         try {
           await _output.close();
         } catch (_) {}
@@ -106,9 +117,7 @@ class ZipFileEncoder {
   }) {
     _output = outputFileStream;
     _level = level;
-    // Without streamed ZipEncoder compressed each deflated entry into memory:
-    // 1042 MB for 920 MB file at level 1, 667 MB at level 6. With streamed it
-    // writes sizes in data descriptor after data and needs 19 MB
+    // Streamed ZIP writes data descriptors to avoid buffering entire entries.
     _encoder = ZipEncoder(password: password, streamed: true);
     _encoder.startEncode(_output, level: level, modified: modified);
   }
@@ -239,9 +248,7 @@ class ZipFileEncoder {
   }
 
   void _add(ArchiveFile file, int? level) {
-    // ZipEncoder took store as deflate level 0: it buffered whole entry in
-    // memory, 2 GB for 1 GB file, and wrote method 8. We set method 0, which
-    // ZipEncoder writes straight from file
+    // Store uses ZIP method 0 rather than deflate at compression level 0.
     if ((level ?? _level) != store || file.compression != null) {
       _encoder.add(file, level: level);
       return;
