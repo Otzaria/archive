@@ -20,14 +20,40 @@ class _MeteredInputStream extends InputMemoryStream {
 }
 
 void main() {
-  test('EOCD lookup inspects only the ZIP comment window', () {
-    // No EOCD: a linear scan of all 2 MiB wastes file I/O on corrupt ZIPs.
-    final input = _MeteredInputStream(Uint8List(2 * 1024 * 1024));
-    final decoder = ZipDecoder();
-    final decoded = decoder.decodeStream(input);
-    expect(decoded, isEmpty);
-    expect(decoder.directory.filePosition, -1);
-    expect(input.scannedBytes, lessThan(100 * 1024));
+  test('EOCD at EOF does not scan the archive payload', () {
+    final content = Uint8List(2 * 1024 * 1024);
+    final archive = Archive()
+      ..addFile(ArchiveFile.noCompress('file.bin', content.length, content));
+    final input = _MeteredInputStream(ZipEncoder().encodeBytes(archive));
+    final directory = ZipDirectory()..read(input);
+    expect(directory.fileHeaders.single.filename, 'file.bin');
+    expect(directory.filePosition, input.totalLength - ZipDirectory.eocdSize);
+    expect(input.scannedBytes, lessThan(2048));
+  });
+
+  test('a trailing-junk fallback does not scan the archive payload', () {
+    final content = Uint8List(2 * 1024 * 1024);
+    final archive = Archive()
+      ..addFile(ArchiveFile.noCompress('file.bin', content.length, content));
+    final bytes = ZipEncoder().encodeBytes(archive);
+    final input = _MeteredInputStream(
+        Uint8List.fromList([...bytes, ...List.filled(70000, 0x2e)]));
+    final directory = ZipDirectory()..read(input);
+    expect(directory.fileHeaders.single.filename, 'file.bin');
+    expect(directory.filePosition, bytes.length - ZipDirectory.eocdSize);
+    expect(input.scannedBytes, lessThan(72 * 1024));
+  });
+
+  test('EOCD signatures straddling reverse chunks remain readable', () {
+    for (final length in [1019, 1020, 1021, 1022, 1023]) {
+      final archive = Archive()
+        ..addFile(ArchiveFile.string('file.txt', 'data'))
+        ..comment = ''.padRight(length, 'x');
+      final bytes = ZipEncoder().encodeBytes(archive);
+      expect(ZipDecoder().decodeBytes(bytes, verify: true).single.readBytes(),
+          'data'.codeUnits,
+          reason: 'comment=$length');
+    }
   });
 
   test('EOCD-looking bytes inside a ZIP comment are not preferred', () {
@@ -47,8 +73,7 @@ void main() {
   });
 
   test('ZIP with trailing junk keeps the compatibility fallback', () {
-    final archive = Archive()
-      ..addFile(ArchiveFile.string('file.txt', 'data'));
+    final archive = Archive()..addFile(ArchiveFile.string('file.txt', 'data'));
     final bytes = ZipEncoder().encodeBytes(archive);
     final trailing = Uint8List.fromList([...bytes, ...List.filled(14, 0x2e)]);
     expect(ZipDecoder().decodeBytes(trailing).single.readBytes(),
@@ -68,20 +93,58 @@ void main() {
       ..addFile(ArchiveFile.string('file.txt', 'data'))
       ..comment = ''.padRight(65535, 'x');
     final bytes = ZipEncoder().encodeBytes(archive);
-    final trailing =
-        Uint8List.fromList([...bytes, ...List.filled(512, 0x2e)]);
+    final trailing = Uint8List.fromList([...bytes, ...List.filled(512, 0x2e)]);
     expect(ZipDecoder().decodeBytes(trailing).single.readBytes(),
         'data'.codeUnits);
   });
 
-  test('a large malformed file on disk does not require a full scan', () {
+  for (final (commentLength, trailingLength) in [(0, 70000), (65535, 4097)]) {
+    test('long trailing bytes decode ($commentLength, $trailingLength)', () {
+      final archive = Archive()
+        ..addFile(ArchiveFile.string('file.txt', 'data'))
+        ..comment = ''.padRight(commentLength, 'x');
+      final bytes = ZipEncoder().encodeBytes(archive);
+      final input = InputMemoryStream(
+          Uint8List.fromList([...bytes, ...List.filled(trailingLength, 0x2e)]))
+        ..setPosition(7);
+      final decoded = ZipDecoder().decodeStream(input, verify: true);
+      expect(input.position, 7);
+      expect(decoded.single.readBytes(), 'data'.codeUnits);
+    });
+  }
+
+  test('long trailing bytes work with ZIP64 and a prefix', () {
+    final bytes = File('test/_data/zip/zip64_archive.zip').readAsBytesSync();
+    final expected = ZipDecoder().decodeBytes(bytes, verify: true);
+    final padded = Uint8List.fromList(
+        [...List.filled(37, 0x4d), ...bytes, ...List.filled(70000, 0x2e)]);
+    final actual = ZipDecoder().decodeBytes(padded, verify: true);
+    expect(actual.map((file) => file.name), expected.map((file) => file.name));
+    for (var i = 0; i < actual.length; i++) {
+      expect(actual[i].readBytes(), expected[i].readBytes());
+    }
+  });
+
+  test('file extraction reads a ZIP with long trailing bytes', () async {
+    final dir = Directory.systemTemp.createTempSync('archive-eocd-extract-');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final archive = Archive()..addFile(ArchiveFile.string('file.txt', 'data'));
+    final file = File('${dir.path}/archive.zip')
+      ..writeAsBytesSync(
+          [...ZipEncoder().encodeBytes(archive), ...List.filled(70000, 0x2e)]);
+    await extractFileToDisk(file.path, '${dir.path}/out');
+    expect(File('${dir.path}/out/file.txt').readAsStringSync(), 'data');
+  });
+
+  test('a malformed file scan preserves the stream position', () {
     final dir = Directory.systemTemp.createTempSync('archive-eocd-');
     addTearDown(() => dir.deleteSync(recursive: true));
     final file = File('${dir.path}/invalid.zip')
       ..writeAsBytesSync(Uint8List(2 * 1024 * 1024));
-    final input = InputFileStream(file.path);
+    final input = InputFileStream(file.path)..setPosition(123);
     try {
       expect(ZipDecoder().decodeStream(input), isEmpty);
+      expect(input.position, 123);
     } finally {
       input.closeSync();
     }

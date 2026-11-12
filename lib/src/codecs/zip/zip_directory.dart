@@ -272,17 +272,11 @@ class ZipDirectory {
 
   int _findSignature(InputStream input) {
     const signatureSize = 4;
-    // ZIP permits a 65535-byte comment after the 22-byte EOCD record.
-    // Keep a small extra window for nonstandard archives with trailing junk,
-    // which this decoder historically accepted. Never scan a whole large
-    // archive just because its end record is corrupt or absent.
+    // Trailing bytes have no fixed limit in ZIPs accepted by this decoder.
     final lastCandidate = input.totalLength - eocdSize;
     if (lastCandidate < 0) {
       return -1;
     }
-    const trailingJunkAllowance = 4096;
-    final earliestCandidate =
-        max(0, lastCandidate - 0xffff - trailingJunkAllowance);
 
     // Preserve the input's read position, including if an archive is invalid.
     final pos = input.position;
@@ -319,12 +313,14 @@ class ZipDirectory {
             return candidate;
           }
         }
-        if (startPos <= earliestCandidate) {
+        // Earlier records cannot reach EOF once their maximum comment is past.
+        if (fallback >= 0 && startPos <= lastCandidate - 0xffff) {
+          return fallback;
+        }
+        if (startPos == 0) {
           break;
         }
-        startPos = max(
-            earliestCandidate,
-            startPos - (chunkSize - (signatureSize - 1)));
+        startPos = max(0, startPos - (chunkSize - (signatureSize - 1)));
       }
       return fallback;
     } finally {
